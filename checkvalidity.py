@@ -120,7 +120,91 @@ def guess_correct_molecules(readfile, writefile, n, multi):
         edge_count += 1
         w = G.get_edge_data(u,v)['weight']
         fw.write(str(edge_count) + "\t" + str(index[u]) + "\t" + str(index[v]) + "\t" + str(w) + "\n")
-    return True    
+    return True
+
+
+def guess_correct_molecules_from_graph(G, writefile):
+
+    n = len(G.nodes())
+    try:
+        if not nx.is_connected(G):
+            print "Not connected"
+            return False
+    except:
+        print "Null graph"
+        return False
+    # '''
+    nodes = len(G.nodes())
+    count = 1
+    index = defaultdict(int)
+    for i in range(n):
+        if i not in G.nodes():
+            G.add_node(i)
+        else:
+            index[i] = count
+            count += 1
+
+    e = len(G.edges())
+    deg = []
+    adj = np.array(nx.adjacency_matrix(G).todense())
+    for i in G.nodes():
+        deg.append(np.sum(adj[i]))
+
+    deg = np.array(deg)
+    # print "debug", deg
+    maxdeg = deg.max()
+    if maxdeg >= 5:
+        return False
+    # if maxdeg >= 7 or maxdeg == 5 :
+    #    return False
+    # print degarray
+    CC = 0
+    HC = 0
+    NC = 0
+    OC = 0
+    SC = 0
+
+    fw = open(writefile, "w")
+
+    fw.write("@<TRIPOS>MOLECULE\n")
+    fw.write("Dummy Atom\n")
+    fw.write(str(nodes) + " " + str(e) + "\n\n")
+
+    fw.write("@<TRIPOS>ATOM\n")
+
+    atom_count = 0
+    # print "DE", len(degarray), degarray
+    for i in range(n):
+        # print "Debug", i , deg[i]
+        if deg[i] == 0:
+            continue
+        atom = getAtom(deg[i])
+        atom_count += 1
+        if atom == 'C':
+            CC += 1
+            fw.write(str(atom_count) + "\t" + atom + str(CC) + "\t0\t0\t0\tC\n")
+        elif atom == 'N':
+            NC += 1
+            fw.write(str(atom_count) + "\t" + atom + str(NC) + "\t0\t0\t0\tN\n")
+        elif atom == 'H':
+            HC += 1
+            fw.write(str(atom_count) + "\t" + atom + str(HC) + "\t0\t0\t0\tH\n")
+        elif atom == 'O':
+            OC += 1
+            fw.write(str(atom_count) + "\t" + atom + str(OC) + "\t0\t0\t0\tO\n")
+
+        elif atom == 'S':
+            SC += 1
+            fw.write(str(atom_count) + "\t" + atom + str(SC) + "\t0\t0\t0\tS\n")
+        else:
+            fw.write(str(atom_count) + "\t" + atom + "\t0\t0\t0\tUN\n")
+    fw.write("\n@<TRIPOS>BOND\n")
+    edge_count = 0
+    for (u, v) in G.edges():  # list(G.edges_iter(data='weight', default=1)):
+        edge_count += 1
+        w = G.get_edge_data(u, v)['weight']
+        fw.write(str(edge_count) + "\t" + str(index[u]) + "\t" + str(index[v]) + "\t" + str(w) + "\n")
+    return True
 
 def drawchem(mols):
     count = 0

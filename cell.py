@@ -63,7 +63,7 @@ class VAEGCell(object):
             # Random sampling ~ N(0, 1)
             eps = eps_passed 
             #eps = tf.random_normal((n, self.z_dim, 1), 0.0, 1.0, dtype=tf.float32)
-	    
+
 	    temp_stack = []
 	    for i in range(n):
 		temp_stack.append(tf.matmul(enc_sigma[i], eps[i]))

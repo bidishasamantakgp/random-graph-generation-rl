@@ -1,15 +1,8 @@
 from utils import *
 #create_dir, pickle_save, print_vars, load_data, get_shape, proxy
-from config import SAVE_DIR, VAEGConfig
-from datetime import datetime
-from cell import VAEGCell
-from model import VAEG
-
+from modelrl import VAEGRL
 import tensorflow as tf
-import numpy as np
 import logging
-import pickle
-import os
 import argparse
 
 logging.basicConfig(format="[%(asctime)s] %(message)s", datefmt="%m%d %H:%M:%S")
@@ -37,6 +30,7 @@ def add_arguments(parser):
     parser.add_argument("--z_dim", type=int, default=5, help="z_dim")
     parser.add_argument("--nodes", type=int, default=5, help="z_dim")
     parser.add_argument("--bin_dim", type=int, default=3, help="bin_dim")
+    parser.add_argument("--temperature", type=int, default=3, help="temperature")
 
     parser.add_argument("--graph_file", type=str, default=None,
                         help="The dictory where the training graph structure is saved")
@@ -48,6 +42,8 @@ def add_arguments(parser):
 
     parser.add_argument("--out_dir", type=str, default=None,
                         help="Store log/model files.")
+    parser.add_argument("--restore_dir", type=str, default=None,
+                        help="Restore weight values from NeVAE.")
 
 def create_hparams(flags):
   """Create training hparams."""
@@ -55,6 +51,7 @@ def create_hparams(flags):
       # Data
       graph_file=flags.graph_file,
       out_dir=flags.out_dir,
+      restore_dir=flags.restore_dir,
       z_dir=flags.z_dir,
       sample_file=flags.sample_file,
       z_dim=flags.z_dim,
@@ -67,8 +64,10 @@ def create_hparams(flags):
       random_walk=flags.random_walk,
       log_every=flags.log_every,
       nodes=flags.nodes,
-      bin_dim = flags.bin_dim,
-      mask_weight = flags.mask_weight,
+      bin_dim=flags.bin_dim,
+      mask_weight=flags.mask_weight,
+      temperature=flags.temperature,
+
       #sample
       sample=flags.sample
       )
@@ -87,37 +86,8 @@ if __name__ == '__main__':
     e = max([len(edge) for edge in edges])
         
     log_fact_k = log_fact(e)
-    #model2 = VAEG(hparams, placeholders, hparams.nodes, 1, edges, log_fact_k)
-    # print("Debug", num_nodes, adj[0][0])
-    # Training
-    model = VAEG(hparams, placeholders, num_nodes, num_features, edges, log_fact_k, hde)
-    model.restore(hparams.out_dir)
-    #model.initialize()
-    model.train(placeholders, hparams, adj, weight, weight_bin, features)
-    
-    #Test code
-    '''
-    model2 = VAEG(hparams, placeholders, 30, 1)
-    model2.restore(hparams.out_dir)
-    hparams.sample = True
-    i = 0
-    G_good = load_embeddings(hparams.z_dir+'train0.txt')
-    G_bad = load_embeddings(hparams.z_dir+'test_11.txt')
-    
-    #model2.sample_graph_slerp(hparams, placeholders, 5, G_good, G_bad, num=29)
-    
-    while i < 10:
-        G_bad = model2.sample_graph_slerp(hparams, placeholders, i, G_good, G_bad, num=29)
 
-        i+=1
-   #while i < 20:
-    #    model2.sample_graph(hparams, placeholders, i, 29)
-    #    i += 1
-    #G_good = load_
-    #i = 0
-    #while i < 10:
-    #    model2.sample_graph(hparams, placeholders, i, 36)
-    #    i += 1
+    model2 = VAEGRL(hparams, placeholders, num_nodes, num_features, edges, log_fact_k, hde)
+    model2.copy_weight(hparams.restore_dir)
+    model2.train(placeholders, hparams, adj, weight, weight_bin, features)
 
-    #model2.plot_hspace(hparams, placeholders, 30)    
-    '''

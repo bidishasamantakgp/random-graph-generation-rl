@@ -11,6 +11,7 @@ import glob
 from collections import defaultdict
 from math import log
 
+
 def change(p, w, hnodes, nodes, bin_dim, degree, indicator):
     p_matrix = np.zeros((nodes - len(hnodes), nodes - len(hnodes)))
     w_matrix = np.zeros((nodes - len(hnodes), nodes - len(hnodes), bin_dim))
@@ -32,6 +33,7 @@ def change(p, w, hnodes, nodes, bin_dim, degree, indicator):
                 l += 1
         k += 1 
     return (p_matrix, w_matrix, degree_new, indicator_new)
+
 
 def normalise_h2(prob, weight, bin_dim, indicator, edge_mask, list_edges):
     n = len(prob[0])
@@ -58,8 +60,8 @@ def normalise_h2(prob, weight, bin_dim, indicator, edge_mask, list_edges):
         combined_problist.extend(p_rs[u][v] * edge_mask[u][v] * w_rs[u][v])
 
     combined_problist = np.array(combined_problist)
-    #print("Debug utils", problist, combined_problist)
     return combined_problist / combined_problist.sum(), candidate_list_edges
+
 
 def normalise_h1(prob, weight, bin_dim, indicator, edge_mask, node):
     n = len(prob[0])
@@ -93,10 +95,45 @@ def normalise_h1(prob, weight, bin_dim, indicator, edge_mask, node):
                 combined_problist.extend(p_rs[node][j] * w_rs[node][j] * edge_mask[j][node])
     problist = np.array(problist)
     combined_problist = np.array(combined_problist)
-    
-    #print("Debug", combined_problist.sum(), problist.sum(), problist)
-    #return combined_problist / problist.sum()
     return combined_problist / combined_problist.sum()
+
+
+def get_weighted_edges(indicator, prob, edge_mask, w_edge, n_edges, node_list, degree_mat):
+        i = 0
+        candidate_edges = []
+        list_edges = get_candidate_edges(len(node_list))
+        try:
+            while i < n_edges :
+                p = normalise_h1(prob, w_edge, indicator.shape[1], indicator, edge_mask)
+                candidate_edges.extend([list_edges[k] for k in
+                                    np.random.choice(range(len(list_edges)), [1], p=p, replace=False)])
+
+                (u, v, w) = candidate_edges[i]
+                degree_mat[u] += w
+                degree_mat[v] += w
+
+                edge_mask[u][v] = 0
+                edge_mask[v][u] = 0
+
+                if (node_list[u] - degree_mat[u]) == 0:
+                    indicator[u][0] = 0
+                if (node_list[u] - degree[u]) <= 1:
+                    indicator[u][1] = 0
+                if (node_list[u] - degree[u]) <= 2:
+                    indicator[u][2] = 0
+
+                if (node_list[v] - degree[v]) == 0:
+                    indicator[v][0] = 0
+                if (node_list[v] - degree[v]) <= 1:
+                    indicator[v][1] = 0
+                if (node_list[v] - degree[v]) <= 2:
+                    indicator[v][2] = 0
+                i += 1
+        except:
+            # if the alignment was no possible
+            candidate_edges = []
+
+        return candidate_edges
 
 def normalise_h(prob, weight, hnodes, bin_dim , indicator, edge_mask, indexlist):
     
@@ -149,7 +186,7 @@ def normalise(prob, weight, n, bin_dim, seen_list, list_edges, indicator):
     p_rs = np.exp(np.minimum(prob, 10 * temp))
     p_rs = p_rs/p_rs.sum()
     temp = np.ones([n, n, bin_dim])
-    w_rs = np.exp(np.minimum(weight, 10* temp))
+    w_rs = np.exp(np.minimum(weight, 10 * temp))
     #w_rs = p_rs/p_rs.sum()
     combined_problist = []
     problist = []
@@ -175,47 +212,7 @@ def normalise(prob, weight, n, bin_dim, seen_list, list_edges, indicator):
     problist = np.array(problist)
     #return problist/problist.sum(), list_edges, w_rs
     return combined_problist/problist.sum(), list_edges, w_rs
-    #'''
-    p_rs = prob/prob.sum()
 
-    #p_rs = prob/prob.sum(axis=0)[:,None]
-    #p_new_rs = np.zeros([n,n,bin_dim])
-    #w_rs = np.zeros([n, n, bin_dim])
-    w_rs = weight
-    problist = []
-    negval = 0.0
-
-    for i in range(n):
-        for j in range(i+1, n):
-            if (i,j,1) in seen_list or (i,j,2) in seen_list or (i,j,3) in seen_list:
-                if (i, j, 1) in list_edges:
-                    list_edges.remove((i, j, 1))
-                if (i, j, 2) in list_edges:
-                    list_edges.remove((i, j, 2))
-                if (i, j, 3) in list_edges:
-                    list_edges.remove((i, j, 3))
-                continue
-            #'''
-            #w_rs[i][j] = weight[i][j]/ sum(weight[i][j])
-            #w_rs[i][j] = np.exp(weight[i][j])/ sum(np.exp(weight[i][j]))
-            #p_new_rs[i][j] = p_rs[i][j] * w_rs[i][j]
-
-            probtemp = np.multiply(np.exp(np.minimum(p_rs[i][j]* w_rs[i][j], [10.0, 10.0, 10.0])), np.multiply(indicator[i], indicator[j]))
-            #print("DEBUG proptemp", probtemp.sum())
-            if probtemp.sum() > 0 :
-                problist.extend(probtemp/ probtemp.sum())
-            else:
-                problist.extend(probtemp)
-            negval += p_rs[i][j] * w_rs[i][j][0]
-            #'''
-    #print len(problist), negval
-    #prob = np.triu(p_new_rs,1)
-    #problist.append(negval)
-
-    problist = np.array(problist)
-    #print problist, problist.sum()
-    #print problist.sum()
-    return problist/problist.sum(), list_edges
 
 def get_candidate_edges(n):
     list_edges = []
@@ -226,6 +223,7 @@ def get_candidate_edges(n):
             list_edges.append((i, j, 2))
             list_edges.append((i, j, 3))
     return list_edges
+
 
 def get_candidate_neighbor_edges(index, n):
     list_edges = []
@@ -245,6 +243,7 @@ def get_candidate_neighbor_edges(index, n):
     
     return list_edges
 
+
 def slerp(p0, p1, t):
     omega = arccos(dot(p0/norm(p0), p1/norm(p1)))
     so = sin(omega)
@@ -253,8 +252,10 @@ def slerp(p0, p1, t):
     #print "Debug slerp", p0, p1, omega, so,  sin((1.0-t)*omega)/so,  sin((1.0-t)*omega)/so *np.array(p0)
     return sin((1.0-t)*omega) / so * np.array(p0) + sin(t*omega)/so * np.array(p1)
 
+
 def lerp(p0, p1, t):
     return np.add(p0, t * np.subtract(p1,p0))
+
 
 def degree(A):
     return np.zeros()
@@ -277,6 +278,7 @@ def construct_feed_dict(lr,dropout, k, n, d, decay, placeholders):
 def get_shape(tensor):
     '''return the shape of tensor as list'''
     return tensor.get_shape().as_list()
+
 
 def basis(adj, atol=1e-13, rtol=0):
     """Estimate the basis of a matrix.
@@ -317,6 +319,7 @@ def basis(adj, atol=1e-13, rtol=0):
     rank = int((s >= tol).sum())
     q, r = qr(A)
     return q[:rank]
+
 
 def print_vars(string):
     '''print variables in collection named string'''
@@ -412,6 +415,7 @@ def load_data(filename, num=0, bin_dim=3):
     
     return (adjlist, weightlist, weight_binlist, featurelist, edgelist, hdelist)
 
+
 def pickle_save(content, path):
     '''Save the content on the path'''
     with open(path, 'wb') as f:
@@ -425,3 +429,32 @@ def getedges(adj, n):
             if adj[i][j] > 0:
                 edges.append((i,j, adj[i][j]))
     return edges
+
+from rdkit.Chem import Descriptors
+from rdkit.Chem import rdmolops, MolFromSmiles, MolToSmiles
+from rdkit import Chem
+import sascorer
+from checkvalidity import *
+
+def compute_cost(G, writefile):
+    cost = 0.0
+    if guess_correct_molecules_from_graph(G, writefile):
+        m1 = Chem.MolFromMol2File(sys.argv[2])
+        if m1 != None:
+            s = Chem.MolToSmiles(m1)
+            sas = -sascorer.calculateScore(MolFromSmiles(s))
+            logP = Descriptors.MolLogP(MolFromSmiles(s))
+            cycle_list = nx.cycle_basis(G)
+
+            if len(cycle_list) == 0:
+                cycle_length = 0
+            else:
+                cycle_length = max([len(j) for j in cycle_list])
+            if cycle_length <= 6:
+                cycle_length = 0
+            else:
+                cycle_length = cycle_length - 6
+            cycle_score = -cycle_length
+            cost = sas + logP + cycle_score
+    # we want to define this property value such that low vales are better
+    return -cost

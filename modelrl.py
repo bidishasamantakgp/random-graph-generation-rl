@@ -1,7 +1,7 @@
 from utils import *
 from config import SAVE_DIR, VAEGConfig
 from cell import VAEGCell
-from math import log
+from rlcell import VAEGRLCell
 import tensorflow as tf
 import numpy as np
 import logging
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
-class VAEG(VAEGConfig):
+class VAEGRL(VAEGConfig):
     def __init__(self, hparams, placeholders, num_nodes, num_features, edges, log_fact_k, hde, istest=False):
         self.features_dim = num_features
         self.input_dim = num_nodes
@@ -34,212 +34,113 @@ class VAEG(VAEGConfig):
         self.mask_weight = hparams.mask_weight
         self.log_fact_k = log_fact_k
         self.hde = hde
+        self.temperature = hparams.temperature
 
-        # For masking we calculated the likelihood like this
-        def masked_ll(weight_temp, weight_negative, posscore, posweightscore, temp_pos_score, temp):
-
-            degree = np.zeros([self.n], dtype=np.float32)
-            indicator = np.ones([self.n, self.bin_dim], dtype=np.float32)
-            indicator_bridge = np.ones([self.n, self.n], dtype=np.float32)
-            # ring_indicator = np.ones([self.n])
-            ll = 0.0
-            adj = np.zeros([self.n, self.n], dtype=np.float32)
-
-            # for (u, v, w) in self.edges[self.count]:
-            for i in range(len(self.edges[self.count])):
-
-                (u, v, w) = self.edges[self.count][i]
-
-                degree[u] += w
-                degree[v] += w
-
-                modified_weight = tf.reduce_sum(
-                    tf.multiply(np.multiply(indicator[u], indicator[v]), weight_temp[u][v])) / weight_negative[u][v]
-                modified_posscore_weighted = modified_weight * posscore[u][v] * indicator_bridge[u][v] * 1.0
-
-                currentscore = modified_posscore_weighted * 1.0 / (temp_pos_score + temp)
-                ll += tf.log(currentscore + 1e-9)
-
-                modified_weight = tf.reduce_sum(
-                    tf.multiply(np.multiply(indicator[v], indicator[u]), weight_temp[v][u])) / weight_negative[v][u]
-                modified_posscore_weighted = modified_weight * posscore[v][u] * indicator_bridge[v][u] * 1.0
-
-                currentscore = modified_posscore_weighted * 1.0 / (temp_pos_score + temp)
-                ll += tf.log(currentscore + 1e-9)
-
-                # indicator = np.ones([3], dtype = np.float32)
-
-                # if degree[u] >=5 :
-                #    indicator[u][0] = 0
-
-                if degree[u] >= 4:
-                    indicator[u][0] = 0
-                    indicator[u][1] = 0
-                if degree[u] >= 3:
-                    indicator[u][1] = 0
-                    indicator[u][2] = 0
-
-                # if degree[v] >=5 :
-                #    indicator[v][0] = 0
-
-                if degree[v] >= 4:
-                    indicator[v][0] = 0
-                    indicator[v][1] = 0
-                if degree[v] >= 3:
-                    indicator[v][1] = 0
-                    indicator[v][2] = 0
-
-                # From the next there will be no double bond, ensures there will be alternating bonds
-                # there will ne bo bridge
-                if w == 2:
-                    indicator[u][1] = 0
-                    indicator[v][1] = 0
-
-                # If we don't want negative sampling we can uncomment the following
-                '''
-                for i in range(self.n): 
-                    modified_weight = tf.reduce_sum(tf.multiply(indicator[u], weight_temp[u][i])) / weight_negative[u][i]
-                    modified_posscore_weighted = modified_weight * posscore[u][i] * 1.0  
-                    temp_pos_score = temp_pos_score - posweightscore[u][i] + modified_posscore_weighted
-                    #posweightscore[u][i] = modified_posscore_weighted
-                    #temp_posscore[u][i] = tf.reduce_sum(-posweightscore[u][i] + modified_posscore_weighted)
-
-                    modified_weight = tf.reduce_sum(tf.multiply(indicator[u], weight_temp[i][u])) / weight_negative[i][u]
-                    modified_posscore_weighted = modified_weight * posscore[i][u] * 1.0  
-                    temp_pos_score = temp_pos_score - posweightscore[i][u] + modified_posscore_weighted
-                    #posweightscore[i][u] = modified_posscore_weighted
-                    #temp_posscore[i][u] = tf.reduce_sum(-posweightscore[i][u] + modified_posscore_weighted)
-
-                    modified_weight = tf.reduce_sum(tf.multiply(indicator[v], weight_temp[v][i])) / weight_negative[v][i]
-                    modified_posscore_weighted = modified_weight * posscore[v][i] * 1.0  
-                    temp_pos_score = temp_pos_score - posweightscore[v][i] + modified_posscore_weighted
-                    #posweightscore[v][i] = modified_posscore_weighted
-                    #temp_posscore[v][i] = tf.reduce_sum(-posweightscore[v][i] + modified_posscore_weighted)
-
-                    modified_weight = tf.reduce_sum(tf.multiply(indicator[v], weight_temp[i][v])) / weight_negative[i][v]
-                    modified_posscore_weighted = modified_weight * posscore[i][v] * 1.0  
-                    temp_pos_score = temp_pos_score - posweightscore[i][v] + modified_posscore_weighted
-                '''
-            return ll
-
-        def neg_loglikelihood(prob_dict, w_edge):
+        def neg_loglikelihood(prob_dict, w_edge, edge_list):
             '''
             negative loglikelihood of the edges
             '''
             ll = 0
             k = 0
             with tf.variable_scope('NLL'):
-                dec_mat_temp = tf.reshape(prob_dict, [self.n, self.n])
-                w_edge_new = tf.reshape(w_edge, [self.n, self.n, self.bin_dim])
-
-                # dec_mat = tf.exp(tf.minimum(tf.reshape(prob_dict, [self.n, self.n]),tf.fill([self.n, self.n], 10.0)))
-                weight_negative = []
-                weight_stack = []
-
-                w_edge_new = tf.exp(tf.minimum(w_edge_new, tf.fill([self.n, self.n, self.bin_dim], 10.0)))
+                w_edge_new = tf.exp(tf.minimum(w_edge, tf.fill([self.n, self.n, self.bin_dim], 10.0)))
                 weight_temp = tf.multiply(self.weight_bin, w_edge_new)
-
-                for i in range(self.n):
-                    for j in range(self.n):
-                        weight_negative.append(tf.reduce_sum(w_edge_new[i][j]))
-                        weight_stack.append(tf.reduce_sum(weight_temp[i][j]))
-
-                weight_stack = tf.reshape(weight_stack, [self.n, self.n])
-                weight_negative = tf.reshape(weight_negative, [self.n, self.n])
-
-                w_score = tf.truediv(weight_stack, weight_negative)
-                weight_comp = tf.subtract(tf.fill([self.n, self.n], 1.0), w_score)
-
-                dec_mat = tf.exp(tf.minimum(dec_mat_temp, tf.fill([self.n, self.n], 10.0)))
+                len_logits = prob_dict.shape[0]
+                print "Debug len_logits", len_logits, prob_dict.shape
+                dec_mat = tf.exp(tf.minimum(prob_dict, tf.fill([len_logits, 1], 10.0)))
                 dec_mat = tf.Print(dec_mat, [dec_mat], message="my decscore values:")
 
-                comp = tf.subtract(tf.ones([self.n, self.n], tf.float32), self.adj)
-                comp = tf.Print(comp, [comp], message="my comp values:")
+                posscoremat = dec_mat[:2 * len(self.edges[self.count])]
+                print "Posscore softmax", posscoremat.shape
 
-                temp = tf.reduce_sum(tf.multiply(comp, dec_mat))
-                negscore = tf.multiply(tf.fill([self.n, self.n], temp + 1e-9), weight_comp)
+                negscore = tf.reduce_sum(dec_mat[2 * len(self.edges[self.count]):])
+                print "Negative softmax", negscore.shape
+
                 negscore = tf.Print(negscore, [negscore], message="my negscore values:")
+                negscoremat = tf.fill([2 * len(self.edges[self.count])], negscore)
+                print "negscore", negscoremat.shape
 
-                posscore = tf.multiply(self.adj, dec_mat)
-                posscore = tf.Print(posscore, [posscore], message="my posscore values:")
+                softmax_out = tf.truediv(posscoremat, negscore)
+                print "Shape softmax", softmax_out.shape
 
-                posweightscore = tf.multiply(posscore, w_score)
-                temp_pos_score = tf.reduce_sum(posweightscore)
-                posweightscore = tf.Print(posweightscore, [posweightscore], message="my weighted posscore")
-
-                softmax_out = tf.truediv(posweightscore, tf.add(posweightscore, negscore))
-
-                if self.mask_weight:
-                    # print("Mask weight option")
-                    ll = masked_ll(weight_temp, weight_negative, posscore, posweightscore, temp_pos_score, temp)
-                else:
-                    ll = tf.reduce_sum(
-                        tf.log(tf.add(tf.multiply(self.adj, softmax_out), tf.fill([self.n, self.n], 1e-9))))
+                for i in range(len(edge_list)):
+                    (u,v,w) = edge_list[i]
+                    ll += tf.log(softmax_out[i] * w_edge[i][w-1] + 1e-10)
                 ll = tf.Print(ll, [ll], message="My loss")
-
             return (-ll)
 
-        def kl_gaussian(mu_1, sigma_1, debug_sigma, mu_2, sigma_2):
-            '''
-                Kullback leibler divergence for two gaussian distributions
-            '''
-            print sigma_1.shape, sigma_2.shape
-            with tf.variable_scope("kl_gaussisan"):
-                temp_stack = []
-                for i in range(self.n):
-                    temp_stack.append(tf.square(sigma_1[i]))
-                first_term = tf.trace(tf.stack(temp_stack))
+        def get_trajectories(p_theta, w_theta, node_list, n_edges):
 
-                temp_stack = []
-                for i in range(self.n):
-                    temp_stack.append(tf.matmul(tf.transpose(mu_1[i]), mu_1[i]))
-                second_term = tf.reshape(tf.stack(temp_stack), [self.n])
+            indicator = np.ones([self.n, self.bin_dim])
+            edge_mask = np.ones([self.n, self.n])
+            degree = np.zeros(self.n)
 
-                # k = tf.fill([self.n], tf.cast(self.d, tf.float32))
-                k = tf.fill([self.n], tf.cast(self.z_dim, tf.float32))
+            for (u,v,w) in self.edges[self.count]:
+                edge_mask[u][v] = 0
+                edge_mask[v][u] = 0
+                degree[u]+=1
+                degree[v]+=1
+                if (node_list[u] - degree[u]) == 0:
+                    indicator[u][0] = 0
+                if (node_list[u] - degree[u]) <= 1:
+                    indicator[u][1] = 0
+                if (node_list[u] - degree[u]) <= 2:
+                    indicator[u][2] = 0
 
-                temp_stack = []
-                for i in range(self.n):
-                    temp_stack.append(tf.reduce_prod(tf.square(debug_sigma[i])))
-                third_term = tf.log(tf.add(tf.stack(temp_stack), tf.fill([self.n], 1e-09)))
+                if (node_list[v] - degree[v]) == 0:
+                    indicator[v][0] = 0
+                if (node_list[v] - degree[v]) <= 1:
+                    indicator[v][1] = 0
+                if (node_list[v] - degree[v]) <= 2:
+                    indicator[v][2] = 0
 
-                return 0.5 * tf.add(tf.subtract(tf.add(first_term, second_term), k), third_term)
+            trial = 0
+            candidate_edges = []
+            G = nx.Graph()
 
-        def ll_poisson(lambda_, x):
-            return -(x * np.log(lambda_) - lambda_ * np.log(2.72) - self.log_fact_k[x - 1])
-
-        def label_loss_predict(label, predicted_label):
-            predicted_label_new = tf.reshape(predicted_label, [self.n, self.d])
-            return tf.nn.softmax_cross_entropy_with_logits(labels=label, logits=predicted_label_new)
-
-        def get_lossfunc(enc_mu, enc_sigma, debug_sigma, prior_mu, prior_sigma, dec_out, w_edge, label):
-            kl_loss = kl_gaussian(enc_mu, enc_sigma, debug_sigma, prior_mu, prior_sigma)  # KL_divergence loss
-            likelihood_loss = neg_loglikelihood(dec_out, w_edge)  # Cross entropy loss
-            self.ll = likelihood_loss
-            self.kl = kl_loss
-            # For ZINC
-            lambda_e = 31
-            lambda_n = 30
-            # lambda_hde = 5
-            # lambda_e = 24
-            # lambda_n = 24
-            edgeprob = ll_poisson(lambda_e, len(self.edges[self.count]))
-            nodeprob = ll_poisson(lambda_n, self.n)
-            label_loss = label_loss_predict(self.features, label)
-
-            # return tf.reduce_mean(kl_loss) + edgeprob + nodeprob + likelihood_loss
-            return tf.reduce_mean(kl_loss + label_loss) + edgeprob + nodeprob + likelihood_loss
+            while trial < 500:
+                candidate_edges = get_weighted_edges(indicator, p_theta, edge_mask, w_theta, n_edges, node_list, degree)
+                G = nx.Graph()
+                G.add_weighted_edges_from(candidate_edges)
+                if nx.is_connected(G):
+                    break
+                trial += 1
+            return candidate_edges, G
 
         self.adj = tf.placeholder(dtype=tf.float32, shape=[self.n, self.n], name='adj')
         self.features = tf.placeholder(dtype=tf.float32, shape=[self.n, self.d], name='features')
         self.weight = tf.placeholder(dtype=tf.float32, shape=[self.n, self.n], name="weight")
         self.weight_bin = tf.placeholder(dtype=tf.float32, shape=[self.n, self.n, hparams.bin_dim], name="weight_bin")
         self.input_data = tf.placeholder(dtype=tf.float32, shape=[self.k, self.n, self.d], name='input')
+        self.index = tf.placeholder(dtype=tf.float32, shape=[self.n * (self.n-1)/2], name='index')
         self.eps = tf.placeholder(dtype=tf.float32, shape=[self.n, self.z_dim, 1], name='eps')
 
         self.cell = VAEGCell(self.adj, self.weight, self.features, self.z_dim, self.bin_dim)
         self.c_x, enc_mu, enc_sigma, debug_sigma, dec_out, prior_mu, prior_sigma, z_encoded, w_edge, label = self.cell.call(
             self.input_data, self.n, self.d, self.k, self.eps, hparams.sample)
+
+        self.rlcell = VAEGRLCell(self.adj, self.weight, self.features, self.z_dim, self.bin_dim, enc_mu, enc_sigma,self.edges, self.index)
+        #self, adj, weight, features, z_dim, bin_dim, enc_mu, enc_sigma, edges, index
+        rl_dec_out, rl_w_edge = self.rlcell.call(
+            self.input_data, self.n, self.d, self.k, self.eps, hparams.sample)
+
+        # We are considering 10 trajectories only
+        self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr)
+        self.grad = []
+        for j in range(10):
+            trajectory, G = get_trajectories(dec_out, w_edge, label,len(self.edges[self.count]))
+            ll_rl = neg_loglikelihood(rl_dec_out, rl_w_edge, trajectory)
+            ll = neg_loglikelihood(debug_sigma, w_edge, trajectory)
+            importance_weight = tf.exp(1/self.temperature * compute_cost(G)) * (ll/ll_rl)
+            self.cost = ll_rl * importance_weight
+            grad = self.train_op.compute_gradients(ll_rl)
+            for i in range(len(grad)):
+                g = grad[i][1] * importance_weight
+                if len(self.grad) > i:
+                    self.grad[i] = (grad[i][0], self.grad[i][1] + g / 10)
+                else:
+                    self.grad[i] = grad[i]
+
         self.prob = dec_out
         # print('Debug', dec_out.shape)
         self.z_encoded = z_encoded
@@ -248,16 +149,8 @@ class VAEG(VAEGConfig):
         self.w_edge = w_edge
         self.label = label
 
-        self.cost = get_lossfunc(enc_mu, enc_sigma, debug_sigma, prior_mu, prior_sigma, dec_out, w_edge, label)
-
         print_vars("trainable_variables")
-        # self.lr = tf.Variable(self.lr, trainable=False)
-        self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr)
-        self.grad = self.train_op.compute_gradients(self.cost)
-        self.grad_placeholder = [(tf.placeholder("float", shape=gr[1].get_shape()), gr[1]) for gr in self.grad]
         self.apply_transform_op = self.train_op.apply_gradients(self.grad)
-
-        # self.lr = tf.Variable(self.lr, trainable=False)
         self.sess = tf.Session()
 
     def initialize(self):
@@ -273,6 +166,14 @@ class VAEG(VAEGConfig):
         else:
             print("Load the model from {}".format(ckpt.model_checkpoint_path))
             saver.restore(self.sess, ckpt.model_checkpoint_path)
+
+    def copy_weight(self, copydir):
+        self.initialize()
+        var_old = [v for v in tf.global_variables() if "RL" not in v.name][0]
+        saver = tf.train.Saver(var_old)
+        ckpt = tf.train.get_checkpoint_state(copydir)
+        print("Load the model from {}".format(ckpt.model_checkpoint_path))
+        saver.restore(self.sess, ckpt.model_checkpoint_path)
 
     def train(self, placeholders, hparams, adj, weight, weight_bin, features):
         savedir = hparams.out_dir
@@ -303,6 +204,7 @@ class VAEG(VAEGConfig):
                 feed_dict = construct_feed_dict(lr, dr, self.k, self.n, self.d, decay, placeholders)
                 feed_dict.update({self.adj: adj[i]})
                 # print "Debug", features[i].shape
+                np.random
 
                 eps = np.random.randn(self.n, self.z_dim, 1)
                 # tf.random_normal((self.n, 5, 1), 0.0, 1.0, dtype=tf.float32)
@@ -319,13 +221,10 @@ class VAEG(VAEGConfig):
                 input_, train_loss, _, probdict, cx, w_edge = self.sess.run(
                     [self.input_data, self.cost, self.apply_transform_op, self.prob, self.c_x, self.w_edge],
                     feed_dict=feed_dict)
-
                 iteration += 1
-
                 if iteration % hparams.log_every == 0 and iteration > 0:
                     print(train_loss)
                     print("{}/{}(epoch {}), train_loss = {:.6f}".format(iteration, num_epochs, epoch + 1, train_loss))
-                    # print(probdict)
                     checkpoint_path = os.path.join(savedir, 'model.ckpt')
                     saver.save(self.sess, checkpoint_path, global_step=iteration)
                     logger.info("model saved to {}".format(checkpoint_path))
@@ -333,6 +232,7 @@ class VAEG(VAEGConfig):
             print("Time taken for a batch: ", end - start)
         f1 = open(hparams.out_dir + '/iteration.txt', 'w')
         f1.write(str(iteration))
+
 
     def getembeddings(self, hparams, placeholders, adj, deg, weight_bin, weight):
 
@@ -351,116 +251,10 @@ class VAEG(VAEGConfig):
                                                         feed_dict=feed_dict)
         return embedding
 
-    def sample_graph_slerp(self, hparams, placeholders, s_num, G_good, G_bad, inter, ratio, index, num=10):
-        # Agrs :
-        # G_good : embedding of the train graph or good sample
-        # G_bad : embedding of the bad graph
-
-        list_edges = []
-        for i in range(self.n):
-            for j in range(i + 1, self.n):
-                # list_edges.append((i,j))
-                list_edges.append((i, j, 1))
-                list_edges.append((i, j, 2))
-                list_edges.append((i, j, 3))
-        list_weights = [1, 2, 3]
-
-        # for sample in range(s_num):
-        new_graph = []
-        for i in range(self.n):
-            # for i in range(index, index+1):
-            node_good = G_good[i]
-            node_bad = G_bad[i]
-            if i == index:
-                if inter == "lerp":
-                    new_graph.append(lerp(np.reshape(node_good, -1), np.reshape(node_bad, -1), ratio))
-                else:
-                    new_graph.append(slerp(np.reshape(node_good, -1), np.reshape(node_bad, -1), ratio))
-            else:
-                new_graph.append(np.reshape(node_good, -1))
-        eps = np.array(new_graph)
-        eps = eps.reshape(eps.shape + (1,))
-        hparams.sample = True
-        feed_dict = construct_feed_dict(hparams.learning_rate, hparams.dropout_rate, self.k, self.n, self.d,
-                                        hparams.decay_rate, placeholders)
-
-        # TODO adj and deg are filler and does not required while sampling. Need to clean this part
-        adj = np.zeros([self.n, self.n])
-        deg = np.zeros([self.n, 1], dtype=np.float)
-        weight_bin = np.zeros([self.n, self.n, self.bin_dim])
-        weight = np.zeros([self.n, self.n])
-        feed_dict.update({self.adj: adj})
-        feed_dict.update({self.features: deg})
-        feed_dict.update({self.input_data: np.zeros([self.k, self.n, self.d])})
-        feed_dict.update({self.eps: eps})
-        feed_dict.update({self.weight_bin: weight_bin})
-        feed_dict.update({self.weight: weight})
-
-        prob, ll, kl, w_edge = self.sess.run([self.prob, self.ll, self.kl, self.w_edge], feed_dict=feed_dict)
-        prob = np.reshape(prob, (self.n, self.n))
-        w_edge = np.reshape(w_edge, (self.n, self.n, self.bin_dim))
-
-        indicator = np.ones([self.n, self.bin_dim])
-        p, list_edges, w_new = normalise(prob, w_edge, self.n, self.bin_dim, [], list_edges, indicator)
-
-        candidate_edges = [list_edges[i] for i in np.random.choice(range(len(list_edges)), [1], p=p, replace=False)]
-
-        probtotal = 1.0
-        degree = np.zeros([self.n])
-
-        for i in range(hparams.edges - 1):
-            (u, v, w) = candidate_edges[i]
-            # (u,v) = candidate_edges[i]
-            # w = weight_lists[i]
-            degree[u] += w
-            degree[v] += w
-
-            if degree[u] >= 4:
-                indicator[u][0] = 0
-                indicator[u][1] = 0
-
-            if degree[u] >= 3:
-                indicator[u][1] = 0
-                indicator[u][2] = 0
-
-            # if degree[v] >=5 :
-            #    indicator[v][0] = 0
-            if degree[v] >= 4:
-                indicator[v][0] = 0
-                indicator[v][1] = 0
-            if degree[v] >= 3:
-                indicator[v][1] = 0
-                indicator[v][2] = 0
-
-            p, list_edges, w_new = normalise(prob, w_edge, self.n, self.bin_dim, candidate_edges, list_edges, indicator)
-            candidate_edges.extend(
-                [list_edges[k] for k in np.random.choice(range(len(list_edges)), [1], p=p, replace=False)])
-
-        for (u, v, w) in candidate_edges:
-            with open(hparams.sample_file + '/inter/' + str(index) + inter + str(s_num) + '.txt', 'a') as f:
-                # f.write(str(u)+'\t'+str(v)+'\n')
-                f.write(str(u) + ' ' + str(v) + ' {\'weight\':' + str(w) + '}\n')
-
-        with open(hparams.z_dir + '/inter/' + str(index) + inter + str(s_num) + '.txt', 'a') as f:
-            for z_i in eps:
-                f.write('[' + ','.join([str(el[0]) for el in z_i]) + ']\n')
-
-        return new_graph
-
-
 
     def get_masked_candidate_with_atom_ratio_new(self, prob, w_edge, atom_count, num_edges, hde):
         # node_list = defaultdict()
         rest = range(self.n)
-        '''
-        p_temp = prob[0]
-        nodes = []
-        sorted_index = np.argsort(np.array(p_temp))
-        hn = sorted_index[:atom_count[0]]
-        on = sorted_index[atom_count[0]: atom_count[0] + atom_count[1]]
-        nn = sorted_index[atom_count[1] + atom_count[0]: atom_count[1] + atom_count[0] + atom_count[2]]
-        cn = sorted_index[-atom_count[3]:]
-        '''
         nodes = []
         hn = []
         on = []
@@ -524,12 +318,6 @@ class VAEG(VAEGConfig):
                             edge_mask[node][i1] = 0
                 while d < deg_req:
                     p = normalise_h1(prob, w_edge, self.bin_dim, indicator, edge_mask, node)
-                    # print("Debug p", p)
-
-                    # list_edges = get_candidate_neighbor_edges(node, self.n)
-                    # for (u,v,w) in list_edges:
-                    #    print("Debug list edges", u, v, node_list[u], node_list[v])
-
                     candidate_edges.extend([list_edges[k] for k in
                                             np.random.choice(range(len(list_edges)), [1], p=p, replace=False)])
 
