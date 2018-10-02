@@ -145,6 +145,7 @@ def guess_correct_molecules_from_graph(G, writefile):
             count += 1
 
     e = len(G.edges())
+    print("Debug edges", G.edges(), G.nodes())
     deg = []
     adj = np.array(nx.adjacency_matrix(G).todense())
     for i in G.nodes():

@@ -1,4 +1,4 @@
-from utils import *
+from utils_new import *
 #create_dir, pickle_save, print_vars, load_data, get_shape, proxy
 from modelrl import VAEGRL
 import tensorflow as tf
@@ -39,11 +39,11 @@ def add_arguments(parser):
     parser.add_argument("--sample", type=bool, default=False, help="True if you want to sample")
 
     parser.add_argument("--mask_weight", type=bool, default=False, help="True if you want to mask weight")
-
-    parser.add_argument("--out_dir", type=str, default=None,
-                        help="Store log/model files.")
-    parser.add_argument("--restore_dir", type=str, default=None,
-                        help="Restore weight values from NeVAE.")
+    parser.add_argument("--out_dir", type=str, default=None, help="Store log/model files.")
+    parser.add_argument("--restore_dir", type=str, default=None, help="Restore weight values from NeVAE.")
+    parser.add_argument("--neg_sample_size", type=int, default=10, help="number of negative edges to be sampled")
+    parser.add_argument("--node_sample", type=int, default=1, help="number of nodes to be sampled")
+    parser.add_argument("--bfs_sample", type=int, default=1, help="number of times bfs to run")
 
 def create_hparams(flags):
   """Create training hparams."""
@@ -69,7 +69,10 @@ def create_hparams(flags):
       temperature=flags.temperature,
 
       #sample
-      sample=flags.sample
+      sample=flags.sample,
+      neg_sample_size=flags.neg_sample_size,
+      node_sample=flags.node_sample,
+      bfs_sample=flags.bfs_sample
       )
 
 if __name__ == '__main__':
@@ -79,15 +82,18 @@ if __name__ == '__main__':
     hparams = create_hparams(FLAGS)
     
     # loading the data from a file
-    adj, weight, weight_bin, features, edges, hde = load_data(hparams.graph_file, hparams.nodes, hparams.bin_dim)
+    adj, weight, weight_bin, features, edges, all_edges, features1, atom_list, smiles = load_data_new(hparams.graph_file, hparams.nodes, hparams.node_sample, hparams.bfs_sample, hparams.bin_dim)
+    #adj, weight, weight_bin, features, edges, hde = load_data_new(hparams.graph_file, hparams.nodes, hparams.bin_dim)
     num_nodes = adj[0].shape[0]
     num_features = features[0].shape[1]
     print("Num features", num_features)
-    e = max([len(edge) for edge in edges])
-        
+    e = max([len(edge[0]) for edge in edges])
+    print("e", e)
     log_fact_k = log_fact(e)
-
-    model2 = VAEGRL(hparams, placeholders, num_nodes, num_features, edges, log_fact_k, hde)
+    #model2 = VAEG(hparams, placeholders, num_nodes, num_features, log_fact_k, len(adj))
+    #model2.restore(hparams.restore_dir)
+    model2 = VAEGRL(hparams, placeholders, num_nodes, num_features, log_fact_k, len(adj))
     model2.copy_weight(hparams.restore_dir)
-    model2.train(placeholders, hparams, adj, weight, weight_bin, features)
+    model2.train(placeholders, hparams, adj, weight, weight_bin, features, edges, all_edges, features1, atom_list)
+    #model2.train(placeholders, hparams, adj, weight, weight_bin, features)
 
