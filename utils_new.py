@@ -455,12 +455,14 @@ def load_data_new(filename, num, node_sample, edge_sample, bin_dim=3):
     featurelist1 = []
     weightlist = []
     weight_binlist = []
+    weight_bin_list1 = []
     edgelist = []
     smiles = []
     filenumber = int(len(glob.glob(path)) * 1.0)
     filenumber = 1
     atom_list = []
     neg_edgelist = []
+    filenumber = 1
     for fname in sorted(glob.glob(path))[:filenumber]:
         f = open(fname, 'r')
         try:
@@ -508,27 +510,31 @@ def load_data_new(filename, num, node_sample, edge_sample, bin_dim=3):
         pos_count = 0
         neg_edges = []
 
-        edge_list = get_edge_list_BFS(weight, G, node_sample, edge_sample,"max")
+        #edge_list = get_edge_list_BFS(weight, G, node_sample, edge_sample,"max")
+        edge_list = [G.edges()]
         #print("Debug edge_list", edge_list)
         for edges in edge_list:
                 count_pos = 0
                 weight_bin = []
+                #weight_bin = np.zeros([n,n,bin_dim])
                 #np.zeros([bin_dim])
                 for (i, j) in edges:
                     temp = np.zeros([bin_dim])
                     temp[weight[i][j]-1] = 1
                     weight_bin.append(temp)
-                    #weight_bin[pos_count][weight[i][j]-1] = 1
+                    
                     count_pos += 1
                 weight_bin_list.append(weight_bin)
-
+        weight_bin = np.zeros([n,n,bin_dim])
         for i in range(n):
-            for j in range(i+1,n):
+            for j in range(n):
                 if weight[i][j]>0:
                     adj[i][j] = 1
+                    weight_bin[i][j][weight[i][j]-1] = 1
                 #else:
                 neg_edges.append((i,j))
-                #count += 1
+        weight_bin_list1.append(weight_bin)        
+        #count += 1
 
         adjlist.append(adj)
         weightlist.append(weight)
@@ -538,7 +544,7 @@ def load_data_new(filename, num, node_sample, edge_sample, bin_dim=3):
         edgelist.append(edge_list)
         neg_edgelist.append(neg_edges)
     
-    return (adjlist, weightlist, weight_binlist, featurelist, edgelist, neg_edgelist, featurelist1, atom_list, smiles)
+    return (adjlist, weightlist, weight_binlist, weight_bin_list1, featurelist, edgelist, neg_edgelist, featurelist1, atom_list, smiles)
 
 def get_weighted_edges_connected(indicator, prob, edge_mask, w_edge, n_edges, node_list, degree_mat, start):
             i = 0

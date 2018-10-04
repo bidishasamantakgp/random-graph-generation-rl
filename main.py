@@ -82,18 +82,18 @@ if __name__ == '__main__':
     hparams = create_hparams(FLAGS)
     
     # loading the data from a file
-    adj, weight, weight_bin, features, edges, all_edges, features1, atom_list, smiles = load_data_new(hparams.graph_file, hparams.nodes, hparams.node_sample, hparams.bfs_sample, hparams.bin_dim)
+    adj, weight, weight_bin, weight_bin1, features, edges, all_edges, features1, atom_list, smiles = load_data_new(hparams.graph_file, hparams.nodes, hparams.node_sample, hparams.bfs_sample, hparams.bin_dim)
     #adj, weight, weight_bin, features, edges, hde = load_data_new(hparams.graph_file, hparams.nodes, hparams.bin_dim)
     num_nodes = adj[0].shape[0]
     num_features = features[0].shape[1]
-    print("Num features", num_features)
+    print("Num features", num_features, num_nodes)
     e = max([len(edge[0]) for edge in edges])
-    print("e", e)
+    print("e", e, len(all_edges[0]))
     log_fact_k = log_fact(e)
     #model2 = VAEG(hparams, placeholders, num_nodes, num_features, log_fact_k, len(adj))
     #model2.restore(hparams.restore_dir)
     model2 = VAEGRL(hparams, placeholders, num_nodes, num_features, log_fact_k, len(adj))
     model2.copy_weight(hparams.restore_dir)
-    model2.train(placeholders, hparams, adj, weight, weight_bin, features, edges, all_edges, features1, atom_list)
+    model2.train(placeholders, hparams, adj, weight, weight_bin, weight_bin1, features, edges, all_edges, features1, atom_list)
     #model2.train(placeholders, hparams, adj, weight, weight_bin, features)
 

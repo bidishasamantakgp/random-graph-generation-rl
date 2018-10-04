@@ -45,6 +45,7 @@ class VAEGRLCell(object):
         with tf.variable_scope(scope or type(self).__name__):
             eps = eps_passed
             temp_stack = []
+            print("Debug edges", tf.shape(self.edges))
             for i in range(n):
                 temp_stack.append(tf.matmul(self.enc_sigma[i], eps[i]))
             z = tf.add(self.enc_mu, tf.stack(temp_stack))
@@ -59,7 +60,7 @@ class VAEGRLCell(object):
 
             def body(t, k, z, z_stack, z_stack_weight):
                 # need to check once sanity
-                print("Debug shape", t[k].get_shape(), tf.shape(z))
+                print("Debug shape call", t[k].get_shape(), tf.shape(z))
                 print("Debug shape gather",tf.gather(z, t[k][0]).get_shape(), z.get_shape())
                 dots = tf.concat(values = ([tf.gather(z,t[k][0])], [tf.gather(z,t[k][1])]), axis = 1)
                 print("Debug shape dots", dots.get_shape())

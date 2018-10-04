@@ -36,7 +36,7 @@ class VAEGRL(VAEGConfig):
         self.input_size = input_size
         self.combination = hparams.node_sample * hparams.bfs_sample
         self.temperature = hparams.temperature
-        self.E = 15
+        self.E = 20
 
         
         
@@ -45,6 +45,7 @@ class VAEGRL(VAEGConfig):
         self.features = tf.placeholder(dtype=tf.float32, shape=[self.n, self.d], name='features')
         self.features1 = tf.placeholder(dtype=tf.int32, shape=[self.n], name='features1')
         self.weight = tf.placeholder(dtype=tf.float32, shape=[self.n, self.n], name="weight")
+        self.weight_bin1 = tf.placeholder(dtype=tf.float32, shape=[self.n, self.n, hparams.bin_dim], name="weight_bin1")
         self.weight_bin = tf.placeholder(dtype=tf.float32, shape=[self.combination, None, hparams.bin_dim], name="weight_bin")
         self.input_data = tf.placeholder(dtype=tf.float32, shape=[self.k, self.n, self.d], name='input')
         self.eps = tf.placeholder(dtype=tf.float32, shape=[self.n, self.z_dim, 1], name='eps')
@@ -89,7 +90,7 @@ class VAEGRL(VAEGConfig):
                 dec_mat_temp = tf.reshape(prob_dict, [self.n, self.n])
 
                 w_edge_exp = tf.exp(tf.minimum(tf.reshape(w_edge, [self.n, self.n, self.bin_dim]), tf.fill([self.n, self.n, self.bin_dim], 10.0)))
-                w_edge_pos = tf.multiply(self.weight_bin, w_edge_exp)
+                w_edge_pos = tf.multiply(self.weight_bin1, w_edge_exp)
                 
                 w_edge_total = tf.reduce_sum(w_edge_exp, axis=1)
                 w_edge_score = tf.divide(w_edge_pos, w_edge_total)
@@ -113,12 +114,12 @@ class VAEGRL(VAEGConfig):
                 #dec_out = tf.multiply(self.adj, dec_mat) 
                 softmax_out = tf.divide(posscore, tf.add(posscore, negscore))
                 #ll = tf.reduce_sum(tf.log(tf.add(tf.multiply(self.adj, softmax_out), tf.fill([self.n,self.n], 1e-9))),1)
-                l = 1.0
+                ll = 1.0
                 for i in range(len(edge_list)):
                     (u,v,w) = edge_list[i]
-                    ll *= softmax_out[u][v] * w_edge_score[u][v][w-1] + 1e-10
-                l = tf.Print(l, [l], message="My loss")
-            return (l)
+                    ll += softmax_out[u][v] * w_edge_score[u][v][w-1] + 1e-10
+                ll= tf.Print(ll, [ll], message="My loss")
+            return (ll)
 
 
     def get_trajectories(self, p_theta, w_theta, edges, weight, n_fill_edges, atom_list):
@@ -157,7 +158,7 @@ class VAEGRL(VAEGConfig):
             candidate_edges = []
             G = nx.Graph()
 
-            while trial < 500:
+            while trial < 5:
                 #candidate_edges = 
                 #candidate_edges = 
                 #self.get_masked_candidate_with_atom_ratio_new(p_theta, w_theta, node_list, self.n_fill_edges, 1)
@@ -177,25 +178,44 @@ class VAEGRL(VAEGConfig):
     def compute_loss(self, prob, w_edge, rl_dec_out, rl_w_edge, edges, weight, n_fill_edges, atom_list):
         self.train_op = tf.train.AdamOptimizer(learning_rate=self.lr)
         self.grad = []
-        for j in range(10):
+        tvars = tf.trainable_variables()
+        g_vars = [var for var in tvars if 'RL' in var.name]
+        for j in range(1):
             trajectory, G = self.get_trajectories(rl_dec_out[0], rl_w_edge[0], edges, weight, n_fill_edges, atom_list)
+            print("Debug trajectory", trajectory)
             #trajectory, G = get_trajectories(rl_dec_out, rl_w_edge, label, self.edges[0])
             ll_rl = self.likelihood(self.rl_dec_out[0], self.rl_w_edge[0], trajectory)
-            ll = self.likelihood(self.prob[0], self.w_edge[0], trajectory)
+            ll_rl = tf.Print(ll_rl, [ll_rl], message="my ll_rl values:")
+            ll = 1
+            #self.likelihood(self.prob[0], self.w_edge[0], trajectory)
             importance_weight = tf.exp(1/self.temperature * compute_cost(G)) * (ll/ll_rl)
+            importance_weight = tf.Print(importance_weight, [importance_weight], message="my importance_weight values:")
+            
+            print("Debug importance weight", importance_weight)
+            
             self.cost = ll_rl * importance_weight
+            '''
+            tensor = tf.constant([1], dtype=tf.float32)
+
             grad = self.train_op.compute_gradients(tf.log(ll_rl))
+            #grad = self.train_op.compute_gradients(tensor, var_list=g_vars)
+            #grad = tf.Print(grad, [grad], message="my grad values:")
+            print("Debug grad", len(grad), grad, ll_rl)
             for i in range(len(grad)):
-                g = grad[i][1] * importance_weight
+                g = grad[i][0] * importance_weight
                 if len(self.grad) > i:
-                    self.grad[i] = (grad[i][0], self.grad[i][1] + g / 10)
+                    self.grad[i] = (self.grad[i][0] + g / 10, grad[i][1])
                 else:
                     self.grad.append(grad[i])
 
+            '''
+        '''
         print_vars("trainable_variables")
+        print("Debug self grads", self.grad)
 
-        self.apply_transform_op = self.train_op.apply_gradients(self.grad)
         
+        self.apply_transform_op = self.train_op.apply_gradients(self.grad)
+        '''
 
     def initialize(self):
         logger.info("Initialization of parameters")
@@ -224,7 +244,7 @@ class VAEGRL(VAEGConfig):
 
     
     
-    def train(self, placeholders, hparams, adj, weight, weight_bin, features, edges, all_edges, features1, atom_list):
+    def train(self, placeholders, hparams, adj, weight, weight_bin, weight_bin1, features, edges, all_edges, features1, atom_list):
         savedir = hparams.out_dir
         lr = hparams.learning_rate
         dr = hparams.dropout_rate
@@ -242,7 +262,7 @@ class VAEGRL(VAEGConfig):
         if ckpt:
             saver.restore(self.sess, ckpt.model_checkpoint_path)
             print("Load the model from %s" % ckpt.model_checkpoint_path)
-
+        start_before_epoch = time.time()
         for epoch in range(num_epochs):
             start = time.time()
             for i in range(len(adj)):
@@ -261,10 +281,11 @@ class VAEGRL(VAEGConfig):
                 feed_dict.update({self.features: features[i]})
                 feed_dict.update({self.features1: features1[i]})
                 feed_dict.update({self.weight_bin: weight_bin[i]})
+                feed_dict.update({self.weight_bin1: weight_bin1[i]})
                 feed_dict.update({self.weight: weight[i]})
                 feed_dict.update({self.input_data: np.zeros([self.k,self.n,self.d])})
                 feed_dict.update({self.eps: eps})
-                feed_dict.update({self.n_fill_edges: len(edges[i][0])-10 })
+                feed_dict.update({self.n_fill_edges: len(edges[i][0])-20 })
                 #neg_indices = np.random.choice(range(len(neg_edges[i])), hparams.neg_sample_size, replace=False)
                 #combined_edges = []
                 #neg_edges_to_be_extended = [neg_edges[i][index] for index in neg_indices]
@@ -281,8 +302,10 @@ class VAEGRL(VAEGConfig):
 
                 #input_, train_loss, _, probdict, cx, w_edge, lambda_e, lambda_n= self.sess.run([self.input_data ,self.cost, self.apply_transform_op, self.prob, self.c_x, self.w_edge, self.lambda_e, self.lambda_n], feed_dict=feed_dict)
                 prob, w_edge, rl_prob, rl_w_edge, lambda_e, lambda_n = self.sess.run([self.prob, self.w_edge, self.rl_dec_out, self.rl_w_edge, self.lambda_e, self.lambda_n], feed_dict=feed_dict)
-                self.compute_loss(prob, w_edge, rl_prob, rl_w_edge, edges[i][0], weight[i], len(edges[i][0])-10, atom_list)
-                train_loss, _ = self.sess.run([self.cost, self.apply_transform_op])
+                print("Debug shapes" , rl_prob[0].shape, rl_w_edge[0].shape )
+                self.compute_loss(prob, w_edge, rl_prob, rl_w_edge, edges[i][0], weight[i], len(edges[i][0])-20, atom_list)
+                #train_loss, _ = self.sess.run([self.cost, self.apply_transform_op])
+                train_loss = self.sess.run([self.cost], feed_dict=feed_dict)
                 #input_, train_loss, _, probdict, cx, w_edge, lambda_e, lambda_n= self.sess.run([self.input_data ,self.cost, self.apply_transform_op, self.prob, self.c_x, self.w_edge, self.lambda_e, self.lambda_n], feed_dict=feed_dict)
                 
                 iteration += 1
